@@ -1,0 +1,220 @@
+{
+  "network": "example-ot",
+  "levels": {
+    "L3": "Rete IT / DMZ industriale",
+    "L2": "Supervisione (SCADA)",
+    "L1": "Controllo e bus di campo"
+  },
+  "devices": [
+    {
+      "name": "dsp-ot-fw",
+      "type": "firewall",
+      "level": "L3",
+      "ip": "10.72.20.1",
+      "model": "LabFW OT-200",
+      "links": [],
+      "role": "Firewall di segmentazione IT/OT",
+      "checks": [
+        "fw_default_creds",
+        "fw_it_to_modbus"
+      ]
+    },
+    {
+      "name": "dsp-ot-sw1",
+      "type": "switch",
+      "level": "L1",
+      "ip": "10.72.30.2",
+      "model": "LabIndustrial IE-3000",
+      "links": [
+        "dsp-ot-fw"
+      ],
+      "role": "Switch industriale del bus di campo",
+      "checks": [
+        "switch_mgmt_encrypted"
+      ]
+    },
+    {
+      "name": "dsp-scada-srv",
+      "type": "scada",
+      "level": "L2",
+      "ip": "10.72.20.30",
+      "model": "SCADA/HMI DSP",
+      "links": [
+        "dsp-ot-fw",
+        "dsp-ot-sw1"
+      ],
+      "role": "Server SCADA e HMI di magazzino",
+      "checks": [
+        "hmi_default_creds",
+        "hmi_tls"
+      ]
+    },
+    {
+      "name": "dsp-hist-srv",
+      "type": "historian",
+      "level": "L2",
+      "ip": "10.72.20.31",
+      "model": "Historian DSP",
+      "links": [
+        "dsp-ot-fw",
+        "dsp-scada-srv"
+      ],
+      "role": "Server historian dei dati di processo",
+      "checks": [
+        "no_legacy_mgmt"
+      ]
+    },
+    {
+      "name": "dsp-ot-sensor",
+      "type": "sensor",
+      "level": "L2",
+      "ip": "10.72.20.40",
+      "model": "Sensore passivo OT",
+      "links": [
+        "dsp-ot-sw1",
+        "dsp-ot-fw"
+      ],
+      "role": "Sensore di rete e censimento OT",
+      "checks": [
+        "no_legacy_mgmt"
+      ]
+    },
+    {
+      "name": "dsp-eng-ws",
+      "type": "workstation",
+      "level": "L1",
+      "ip": "10.72.30.20",
+      "model": "Workstation ingegneria",
+      "links": [
+        "dsp-ot-sw1"
+      ],
+      "role": "Workstation di ingegneria PLC",
+      "checks": [
+        "eng_segmentation",
+        "no_legacy_mgmt"
+      ]
+    },
+    {
+      "name": "dsp-plc-conveyor",
+      "type": "plc",
+      "level": "L1",
+      "ip": "10.72.30.11",
+      "model": "LabPLC C100",
+      "links": [
+        "dsp-ot-sw1"
+      ],
+      "min_fw": "3.0.0",
+      "role": "PLC nastri trasportatori e smistamento",
+      "checks": [
+        "modbus_write_auth",
+        "fw_current"
+      ]
+    },
+    {
+      "name": "dsp-plc-coldstore",
+      "type": "plc",
+      "level": "L1",
+      "ip": "10.72.30.12",
+      "model": "LabPLC C200",
+      "links": [
+        "dsp-ot-sw1"
+      ],
+      "min_fw": "3.0.0",
+      "role": "PLC celle frigorifere",
+      "checks": [
+        "modbus_write_auth",
+        "fw_current"
+      ]
+    },
+    {
+      "name": "dsp-plc-dock",
+      "type": "plc",
+      "level": "L1",
+      "ip": "10.72.30.13",
+      "model": "LabPLC D50",
+      "links": [
+        "dsp-ot-sw1"
+      ],
+      "min_fw": "3.0.0",
+      "role": "PLC portoni e baie di carico",
+      "checks": [
+        "modbus_write_auth",
+        "fw_current"
+      ]
+    },
+    {
+      "name": "dsp-rtu-gw",
+      "type": "rtu_gateway",
+      "level": "L1",
+      "ip": "10.72.30.14",
+      "model": "LabGate RTU-TCP",
+      "links": [
+        "dsp-ot-sw1"
+      ],
+      "min_fw": "1.4.0",
+      "role": "Gateway Modbus RTU/TCP per sensori seriali",
+      "checks": [
+        "modbus_write_auth",
+        "fw_current"
+      ]
+    }
+  ],
+  "check_titles": {
+    "modbus_write_auth": "Scritture Modbus da host non autorizzati rifiutate",
+    "fw_current": "Firmware aggiornato",
+    "switch_mgmt_encrypted": "Gestione cifrata (SSH, non telnet)",
+    "fw_default_creds": "Console di amministrazione senza credenziali di fabbrica",
+    "fw_it_to_modbus": "Nessuna regola apre Modbus (502) dalla rete IT ai dispositivi di campo",
+    "hmi_default_creds": "HMI SCADA senza credenziali di fabbrica",
+    "hmi_tls": "HMI SCADA raggiungibile solo con TLS",
+    "eng_segmentation": "Workstation di ingegneria separata dal bus di campo",
+    "no_legacy_mgmt": "Nessun servizio di gestione in chiaro (telnet/FTP) in ascolto"
+  },
+  "check_texts": {
+    "modbus_write_auth": {
+      "description": "Verifica che il dispositivo Modbus rifiuti le scritture (funzioni 05, 06, 15, 16) provenienti da host non autorizzati. Il censimento prova a scrivere un registro di prova dal sensore OT e lo ripristina.",
+      "rationale": "Modbus TCP non prevede autenticazione né cifratura: chi raggiunge la porta 502 può modificare setpoint e comandi dell'impianto (MITRE ATT&CK for ICS T0836, T0855). Solo l'host SCADA deve poter scrivere.",
+      "remediation": "Limitare le scritture ai soli host autorizzati con una allow-list sul dispositivo o sul firewall industriale, filtrare per funzione Modbus e segmentare il bus di campo dalla rete IT."
+    },
+    "fw_current": {
+      "description": "Verifica che il firmware del dispositivo (letto con l'identificazione Modbus, funzione 43/14) sia almeno alla versione minima richiesta.",
+      "rationale": "Il firmware obsoleto di PLC e gateway espone vulnerabilità note che in OT si correggono di rado: il rischio resta aperto per anni.",
+      "remediation": "Pianificare l'aggiornamento del firmware in una finestra di manutenzione concordata con la produzione; fino ad allora isolare il dispositivo e monitorarne il traffico."
+    },
+    "switch_mgmt_encrypted": {
+      "description": "Verifica che lo switch industriale non offra la gestione in chiaro via telnet (porta 23) e supporti SSH.",
+      "rationale": "Telnet trasmette credenziali e comandi in chiaro: chi è sulla rete può intercettarli e prendere il controllo dello switch.",
+      "remediation": "Disattivare telnet, abilitare SSH con autenticazione a chiave, limitare l'accesso di gestione a una rete dedicata."
+    },
+    "fw_default_creds": {
+      "description": "Verifica che la console di amministrazione del firewall IT/OT non accetti le credenziali di fabbrica (admin/admin).",
+      "rationale": "Il firewall è l'unico confine tra IT e OT: credenziali note permettono di cambiarne le regole e raggiungere i PLC.",
+      "remediation": "Cambiare subito le credenziali, usare account nominali con autenticazione a più fattori e limitare la console alla rete di gestione."
+    },
+    "fw_it_to_modbus": {
+      "description": "Verifica che nessuna regola del firewall IT/OT accetti traffico Modbus (tcp/502) con origine nella rete IT verso i dispositivi di campo. Il censimento legge le regole di inoltro reali del firewall.",
+      "rationale": "Una regola che apre il Modbus dalla rete IT (spesso nata come eccezione di manutenzione) permette a una postazione compromessa di scrivere sui PLC: è il percorso tipico degli attacchi IT→OT.",
+      "remediation": "Rimuovere la regola; consentire il Modbus solo dal server SCADA verso i PLC e fare manutenzione tramite un bastion host con registrazione degli accessi."
+    },
+    "hmi_default_creds": {
+      "description": "Verifica che l'HMI del server SCADA non accetti le credenziali di fabbrica (admin/admin).",
+      "rationale": "L'HMI permette di leggere e comandare l'impianto: credenziali note equivalgono a controllo del processo.",
+      "remediation": "Cambiare le credenziali, creare account per operatore con ruoli distinti e abilitare l'autenticazione a più fattori."
+    },
+    "hmi_tls": {
+      "description": "Verifica che l'HMI del server SCADA sia raggiungibile solo con TLS.",
+      "rationale": "Senza TLS credenziali e comandi viaggiano in chiaro e un attaccante in rete può intercettarli o alterarli.",
+      "remediation": "Pubblicare l'HMI solo su HTTPS con certificato valido e chiudere la porta in chiaro."
+    },
+    "eng_segmentation": {
+      "description": "Verifica che la workstation di ingegneria non abbia un indirizzo nella subnet del bus di campo. La workstation dichiara i propri indirizzi al sensore.",
+      "rationale": "Una workstation sulla stessa rete dei PLC (rete piatta) può raggiungerli senza passare dal firewall; se è compromessa, lo è anche il campo.",
+      "remediation": "Spostare la workstation nella rete di supervisione e farla accedere ai PLC solo tramite il firewall, con regole per funzione e finestra di manutenzione."
+    },
+    "no_legacy_mgmt": {
+      "description": "Verifica che sul sistema non siano in ascolto servizi di gestione o trasferimento in chiaro (telnet porta 23, FTP porta 21).",
+      "rationale": "FTP e telnet espongono credenziali e dati di processo in chiaro e sono bersagli frequenti di scansioni.",
+      "remediation": "Sostituire FTP con SFTP/FTPS e telnet con SSH, oppure chiudere il servizio; limitare l'esposizione con il firewall."
+    }
+  }
+}

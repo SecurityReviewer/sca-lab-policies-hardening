@@ -1,0 +1,237 @@
+policy:
+  id: "ot_topology"
+  file: "ot_topology.yml"
+  name: "Rete industriale OT, SCADA e Modbus (Cyber Reviewer, laboratorio)"
+  description: "Censimento attivo dell'impianto di magazzino logistico di esempio (firewall IT/OT, switch industriale, server SCADA, historian, workstation di ingegneria, PLC e gateway Modbus) con verifiche di hardening: scritture Modbus non autenticate, firmware, gestione in chiaro, credenziali di fabbrica, segmentazione."
+  references:
+    - https://www.cisa.gov/topics/industrial-control-systems
+    - https://csrc.nist.gov/pubs/sp/800/82/r3/final
+
+requirements:
+  name: "Censimento OT presente"
+  condition: all
+  rules:
+    - 'f:/var/ossec/var/ot-topology/inventory.json'
+
+checks:
+  - id: 62301
+    name: "Console di amministrazione senza credenziali di fabbrica — dsp-ot-fw"
+    description: "Verifica che la console di amministrazione del firewall IT/OT non accetti le credenziali di fabbrica (admin/admin).
+ot|type=firewall|level=L3|ip=10.72.20.1|model=LabFW OT-200|role=Firewall di segmentazione IT/OT|links="
+    rationale: "Il firewall è l'unico confine tra IT e OT: credenziali note permettono di cambiarne le regole e raggiungere i PLC."
+    remediation: "Cambiare subito le credenziali, usare account nominali con autenticazione a più fattori e limitare la console alla rete di gestione."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-ot-fw fw_default_creds -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.5"]
+  - id: 62302
+    name: "Nessuna regola apre Modbus (502) dalla rete IT ai dispositivi di campo — dsp-ot-fw"
+    description: "Verifica che nessuna regola del firewall IT/OT accetti traffico Modbus (tcp/502) con origine nella rete IT verso i dispositivi di campo. Il censimento legge le regole di inoltro reali del firewall.
+ot|type=firewall|level=L3|ip=10.72.20.1|model=LabFW OT-200|role=Firewall di segmentazione IT/OT|links="
+    rationale: "Una regola che apre il Modbus dalla rete IT (spesso nata come eccezione di manutenzione) permette a una postazione compromessa di scrivere sui PLC: è il percorso tipico degli attacchi IT→OT."
+    remediation: "Rimuovere la regola; consentire il Modbus solo dal server SCADA verso i PLC e fare manutenzione tramite un bastion host con registrazione degli accessi."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-ot-fw fw_it_to_modbus -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.22"]
+  - id: 62303
+    name: "Gestione cifrata (SSH, non telnet) — dsp-ot-sw1"
+    description: "Verifica che lo switch industriale non offra la gestione in chiaro via telnet (porta 23) e supporti SSH.
+ot|type=switch|level=L1|ip=10.72.30.2|model=LabIndustrial IE-3000|role=Switch industriale del bus di campo|links=dsp-ot-fw"
+    rationale: "Telnet trasmette credenziali e comandi in chiaro: chi è sulla rete può intercettarli e prendere il controllo dello switch."
+    remediation: "Disattivare telnet, abilitare SSH con autenticazione a chiave, limitare l'accesso di gestione a una rete dedicata."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-ot-sw1 switch_mgmt_encrypted -> r:^PASS'
+    compliance:
+      nis2: ["21.2.h"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62304
+    name: "HMI SCADA senza credenziali di fabbrica — dsp-scada-srv"
+    description: "Verifica che l'HMI del server SCADA non accetti le credenziali di fabbrica (admin/admin).
+ot|type=scada|level=L2|ip=10.72.20.30|model=SCADA/HMI DSP|role=Server SCADA e HMI di magazzino|links=dsp-ot-fw,dsp-ot-sw1"
+    rationale: "L'HMI permette di leggere e comandare l'impianto: credenziali note equivalgono a controllo del processo."
+    remediation: "Cambiare le credenziali, creare account per operatore con ruoli distinti e abilitare l'autenticazione a più fattori."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-scada-srv hmi_default_creds -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.5"]
+  - id: 62305
+    name: "HMI SCADA raggiungibile solo con TLS — dsp-scada-srv"
+    description: "Verifica che l'HMI del server SCADA sia raggiungibile solo con TLS.
+ot|type=scada|level=L2|ip=10.72.20.30|model=SCADA/HMI DSP|role=Server SCADA e HMI di magazzino|links=dsp-ot-fw,dsp-ot-sw1"
+    rationale: "Senza TLS credenziali e comandi viaggiano in chiaro e un attaccante in rete può intercettarli o alterarli."
+    remediation: "Pubblicare l'HMI solo su HTTPS con certificato valido e chiudere la porta in chiaro."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-scada-srv hmi_tls -> r:^PASS'
+    compliance:
+      nis2: ["21.2.h"]
+      gdpr: [""]
+      iso_27001: ["A.8.24"]
+  - id: 62306
+    name: "Nessun servizio di gestione in chiaro (telnet/FTP) in ascolto — dsp-hist-srv"
+    description: "Verifica che sul sistema non siano in ascolto servizi di gestione o trasferimento in chiaro (telnet porta 23, FTP porta 21).
+ot|type=historian|level=L2|ip=10.72.20.31|model=Historian DSP|role=Server historian dei dati di processo|links=dsp-ot-fw,dsp-scada-srv"
+    rationale: "FTP e telnet espongono credenziali e dati di processo in chiaro e sono bersagli frequenti di scansioni."
+    remediation: "Sostituire FTP con SFTP/FTPS e telnet con SSH, oppure chiudere il servizio; limitare l'esposizione con il firewall."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-hist-srv no_legacy_mgmt -> r:^PASS'
+    compliance:
+      nis2: ["21.2.h"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62307
+    name: "Nessun servizio di gestione in chiaro (telnet/FTP) in ascolto — dsp-ot-sensor"
+    description: "Verifica che sul sistema non siano in ascolto servizi di gestione o trasferimento in chiaro (telnet porta 23, FTP porta 21).
+ot|type=sensor|level=L2|ip=10.72.20.40|model=Sensore passivo OT|role=Sensore di rete e censimento OT|links=dsp-ot-sw1,dsp-ot-fw"
+    rationale: "FTP e telnet espongono credenziali e dati di processo in chiaro e sono bersagli frequenti di scansioni."
+    remediation: "Sostituire FTP con SFTP/FTPS e telnet con SSH, oppure chiudere il servizio; limitare l'esposizione con il firewall."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-ot-sensor no_legacy_mgmt -> r:^PASS'
+    compliance:
+      nis2: ["21.2.h"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62308
+    name: "Workstation di ingegneria separata dal bus di campo — dsp-eng-ws"
+    description: "Verifica che la workstation di ingegneria non abbia un indirizzo nella subnet del bus di campo. La workstation dichiara i propri indirizzi al sensore.
+ot|type=workstation|level=L1|ip=10.72.30.20|model=Workstation ingegneria|role=Workstation di ingegneria PLC|links=dsp-ot-sw1"
+    rationale: "Una workstation sulla stessa rete dei PLC (rete piatta) può raggiungerli senza passare dal firewall; se è compromessa, lo è anche il campo."
+    remediation: "Spostare la workstation nella rete di supervisione e farla accedere ai PLC solo tramite il firewall, con regole per funzione e finestra di manutenzione."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-eng-ws eng_segmentation -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.22"]
+  - id: 62309
+    name: "Nessun servizio di gestione in chiaro (telnet/FTP) in ascolto — dsp-eng-ws"
+    description: "Verifica che sul sistema non siano in ascolto servizi di gestione o trasferimento in chiaro (telnet porta 23, FTP porta 21).
+ot|type=workstation|level=L1|ip=10.72.30.20|model=Workstation ingegneria|role=Workstation di ingegneria PLC|links=dsp-ot-sw1"
+    rationale: "FTP e telnet espongono credenziali e dati di processo in chiaro e sono bersagli frequenti di scansioni."
+    remediation: "Sostituire FTP con SFTP/FTPS e telnet con SSH, oppure chiudere il servizio; limitare l'esposizione con il firewall."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-eng-ws no_legacy_mgmt -> r:^PASS'
+    compliance:
+      nis2: ["21.2.h"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62310
+    name: "Scritture Modbus da host non autorizzati rifiutate — dsp-plc-conveyor"
+    description: "Verifica che il dispositivo Modbus rifiuti le scritture (funzioni 05, 06, 15, 16) provenienti da host non autorizzati. Il censimento prova a scrivere un registro di prova dal sensore OT e lo ripristina.
+ot|type=plc|level=L1|ip=10.72.30.11|model=LabPLC C100|role=PLC nastri trasportatori e smistamento|links=dsp-ot-sw1"
+    rationale: "Modbus TCP non prevede autenticazione né cifratura: chi raggiunge la porta 502 può modificare setpoint e comandi dell'impianto (MITRE ATT&CK for ICS T0836, T0855). Solo l'host SCADA deve poter scrivere."
+    remediation: "Limitare le scritture ai soli host autorizzati con una allow-list sul dispositivo o sul firewall industriale, filtrare per funzione Modbus e segmentare il bus di campo dalla rete IT."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-conveyor modbus_write_auth -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62311
+    name: "Firmware aggiornato — dsp-plc-conveyor"
+    description: "Verifica che il firmware del dispositivo (letto con l'identificazione Modbus, funzione 43/14) sia almeno alla versione minima richiesta.
+ot|type=plc|level=L1|ip=10.72.30.11|model=LabPLC C100|role=PLC nastri trasportatori e smistamento|links=dsp-ot-sw1"
+    rationale: "Il firmware obsoleto di PLC e gateway espone vulnerabilità note che in OT si correggono di rado: il rischio resta aperto per anni."
+    remediation: "Pianificare l'aggiornamento del firmware in una finestra di manutenzione concordata con la produzione; fino ad allora isolare il dispositivo e monitorarne il traffico."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-conveyor fw_current -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.8"]
+  - id: 62312
+    name: "Scritture Modbus da host non autorizzati rifiutate — dsp-plc-coldstore"
+    description: "Verifica che il dispositivo Modbus rifiuti le scritture (funzioni 05, 06, 15, 16) provenienti da host non autorizzati. Il censimento prova a scrivere un registro di prova dal sensore OT e lo ripristina.
+ot|type=plc|level=L1|ip=10.72.30.12|model=LabPLC C200|role=PLC celle frigorifere|links=dsp-ot-sw1"
+    rationale: "Modbus TCP non prevede autenticazione né cifratura: chi raggiunge la porta 502 può modificare setpoint e comandi dell'impianto (MITRE ATT&CK for ICS T0836, T0855). Solo l'host SCADA deve poter scrivere."
+    remediation: "Limitare le scritture ai soli host autorizzati con una allow-list sul dispositivo o sul firewall industriale, filtrare per funzione Modbus e segmentare il bus di campo dalla rete IT."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-coldstore modbus_write_auth -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62313
+    name: "Firmware aggiornato — dsp-plc-coldstore"
+    description: "Verifica che il firmware del dispositivo (letto con l'identificazione Modbus, funzione 43/14) sia almeno alla versione minima richiesta.
+ot|type=plc|level=L1|ip=10.72.30.12|model=LabPLC C200|role=PLC celle frigorifere|links=dsp-ot-sw1"
+    rationale: "Il firmware obsoleto di PLC e gateway espone vulnerabilità note che in OT si correggono di rado: il rischio resta aperto per anni."
+    remediation: "Pianificare l'aggiornamento del firmware in una finestra di manutenzione concordata con la produzione; fino ad allora isolare il dispositivo e monitorarne il traffico."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-coldstore fw_current -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.8"]
+  - id: 62314
+    name: "Scritture Modbus da host non autorizzati rifiutate — dsp-plc-dock"
+    description: "Verifica che il dispositivo Modbus rifiuti le scritture (funzioni 05, 06, 15, 16) provenienti da host non autorizzati. Il censimento prova a scrivere un registro di prova dal sensore OT e lo ripristina.
+ot|type=plc|level=L1|ip=10.72.30.13|model=LabPLC D50|role=PLC portoni e baie di carico|links=dsp-ot-sw1"
+    rationale: "Modbus TCP non prevede autenticazione né cifratura: chi raggiunge la porta 502 può modificare setpoint e comandi dell'impianto (MITRE ATT&CK for ICS T0836, T0855). Solo l'host SCADA deve poter scrivere."
+    remediation: "Limitare le scritture ai soli host autorizzati con una allow-list sul dispositivo o sul firewall industriale, filtrare per funzione Modbus e segmentare il bus di campo dalla rete IT."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-dock modbus_write_auth -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62315
+    name: "Firmware aggiornato — dsp-plc-dock"
+    description: "Verifica che il firmware del dispositivo (letto con l'identificazione Modbus, funzione 43/14) sia almeno alla versione minima richiesta.
+ot|type=plc|level=L1|ip=10.72.30.13|model=LabPLC D50|role=PLC portoni e baie di carico|links=dsp-ot-sw1"
+    rationale: "Il firmware obsoleto di PLC e gateway espone vulnerabilità note che in OT si correggono di rado: il rischio resta aperto per anni."
+    remediation: "Pianificare l'aggiornamento del firmware in una finestra di manutenzione concordata con la produzione; fino ad allora isolare il dispositivo e monitorarne il traffico."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-plc-dock fw_current -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.8"]
+  - id: 62316
+    name: "Scritture Modbus da host non autorizzati rifiutate — dsp-rtu-gw"
+    description: "Verifica che il dispositivo Modbus rifiuti le scritture (funzioni 05, 06, 15, 16) provenienti da host non autorizzati. Il censimento prova a scrivere un registro di prova dal sensore OT e lo ripristina.
+ot|type=rtu_gateway|level=L1|ip=10.72.30.14|model=LabGate RTU-TCP|role=Gateway Modbus RTU/TCP per sensori seriali|links=dsp-ot-sw1"
+    rationale: "Modbus TCP non prevede autenticazione né cifratura: chi raggiunge la porta 502 può modificare setpoint e comandi dell'impianto (MITRE ATT&CK for ICS T0836, T0855). Solo l'host SCADA deve poter scrivere."
+    remediation: "Limitare le scritture ai soli host autorizzati con una allow-list sul dispositivo o sul firewall industriale, filtrare per funzione Modbus e segmentare il bus di campo dalla rete IT."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-rtu-gw modbus_write_auth -> r:^PASS'
+    compliance:
+      nis2: ["21.2.i"]
+      gdpr: [""]
+      iso_27001: ["A.8.20"]
+  - id: 62317
+    name: "Firmware aggiornato — dsp-rtu-gw"
+    description: "Verifica che il firmware del dispositivo (letto con l'identificazione Modbus, funzione 43/14) sia almeno alla versione minima richiesta.
+ot|type=rtu_gateway|level=L1|ip=10.72.30.14|model=LabGate RTU-TCP|role=Gateway Modbus RTU/TCP per sensori seriali|links=dsp-ot-sw1"
+    rationale: "Il firmware obsoleto di PLC e gateway espone vulnerabilità note che in OT si correggono di rado: il rischio resta aperto per anni."
+    remediation: "Pianificare l'aggiornamento del firmware in una finestra di manutenzione concordata con la produzione; fino ad allora isolare il dispositivo e monitorarne il traffico."
+    condition: all
+    rules:
+      - 'c:python3 /var/ossec/wodles/ot-topology/ot_check.py dsp-rtu-gw fw_current -> r:^PASS'
+    compliance:
+      nis2: ["21.2.e"]
+      gdpr: [""]
+      iso_27001: ["A.8.8"]
